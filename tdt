@@ -13,3 +13,9 @@ The testing covers:
 
 Target view:
 db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates
+
+
+
+Summary: 35 tests — 33 PASS, 2 FAIL.
+
+The two failures to investigate are SDDA-TC-04 (16 records) and SDDA-TC-32 (5,086 records).
