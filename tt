@@ -1,0 +1,1892 @@
+-- =====================================================================
+-- CBDAS-2685
+-- SDDA Deposits / Positions / Interest Rates
+--
+-- Target:
+-- db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.
+-- rawview_loyalty_sdda_deposits_positions_interest_rates
+--
+-- Sources:
+-- sdda_deposits_eod_snapshots
+-- sdda_positions_eod_snapshots
+-- sdda_interest_rates_eod_snapshots
+--
+-- Source tables contain business fields inside payload JSON.
+--
+-- 0 rows = PASS
+-- =====================================================================
+
+
+-- =====================================================================
+-- SDDA-TC-01
+-- Validate SDDA Business Vault view existence
+-- =====================================================================
+
+SELECT
+    'VIEW_NOT_FOUND' AS issue
+FROM (
+    SELECT COUNT(*) AS view_count
+    FROM `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.INFORMATION_SCHEMA.VIEWS`
+    WHERE table_name =
+        'rawview_loyalty_sdda_deposits_positions_interest_rates'
+)
+WHERE view_count = 0;
+
+
+-- =====================================================================
+-- SDDA-TC-02
+-- Validate required SDDA columns exist
+-- =====================================================================
+
+WITH expected_columns AS (
+    SELECT column_name
+    FROM UNNEST([
+        'id',
+        'status',
+        'abi_id',
+        'brds_id',
+        'prds_id',
+        'crds_id',
+        'koncord_id',
+        'creation_date_time',
+        'effective_date',
+        'first_deposit_date',
+        'start_date',
+        'end_date',
+        'maturity_date',
+        'end_cash_amount',
+        'currency',
+        'position_quantity',
+        'position_as_of',
+        'interest_as_of',
+        'interest_business_day_convention',
+        'interest_day_count',
+        'interest_payment_type',
+        'interest_balance_methodology',
+        'interest_rate_type',
+        'spread',
+        'fixed_rate',
+        'funds_transfer_rate'
+    ]) AS column_name
+)
+
+SELECT
+    e.column_name AS missing_column
+FROM expected_columns e
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.INFORMATION_SCHEMA.COLUMNS` c
+    ON c.table_name =
+       'rawview_loyalty_sdda_deposits_positions_interest_rates'
+   AND c.column_name = e.column_name
+WHERE c.column_name IS NULL;
+
+
+-- =====================================================================
+-- SDDA-TC-03
+-- Validate mapped SDDA data types
+-- =====================================================================
+
+WITH expected AS (
+    SELECT 'id' AS column_name, 'STRING' AS expected_type UNION ALL
+    SELECT 'status', 'STRING' UNION ALL
+    SELECT 'abi_id', 'STRING' UNION ALL
+    SELECT 'brds_id', 'INT64' UNION ALL
+    SELECT 'prds_id', 'INT64' UNION ALL
+    SELECT 'crds_id', 'INT64' UNION ALL
+    SELECT 'koncord_id', 'STRING' UNION ALL
+    SELECT 'creation_date_time', 'TIMESTAMP' UNION ALL
+    SELECT 'effective_date', 'DATE' UNION ALL
+    SELECT 'first_deposit_date', 'DATE' UNION ALL
+    SELECT 'start_date', 'DATE' UNION ALL
+    SELECT 'end_date', 'DATE' UNION ALL
+    SELECT 'maturity_date', 'DATE' UNION ALL
+    SELECT 'end_cash_amount', 'FLOAT64' UNION ALL
+    SELECT 'currency', 'STRING' UNION ALL
+    SELECT 'position_quantity', 'FLOAT64' UNION ALL
+    SELECT 'position_as_of', 'DATE' UNION ALL
+    SELECT 'interest_as_of', 'DATE' UNION ALL
+    SELECT 'interest_business_day_convention', 'STRING' UNION ALL
+    SELECT 'interest_day_count', 'STRING' UNION ALL
+    SELECT 'interest_payment_type', 'STRING' UNION ALL
+    SELECT 'interest_balance_methodology', 'STRING' UNION ALL
+    SELECT 'interest_rate_type', 'STRING' UNION ALL
+    SELECT 'spread', 'FLOAT64' UNION ALL
+    SELECT 'fixed_rate', 'FLOAT64' UNION ALL
+    SELECT 'funds_transfer_rate', 'FLOAT64'
+)
+
+SELECT
+    e.column_name,
+    e.expected_type,
+    c.data_type AS actual_type
+FROM expected e
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.INFORMATION_SCHEMA.COLUMNS` c
+    ON c.table_name =
+       'rawview_loyalty_sdda_deposits_positions_interest_rates'
+   AND c.column_name = e.column_name
+WHERE c.column_name IS NULL
+   OR c.data_type != e.expected_type;
+
+
+-- =====================================================================
+-- SDDA-TC-04
+-- Validate SDDA source consolidation
+--
+-- For business dates where source data exists:
+-- Deposit data must exist in target.
+-- Position data must populate Position fields.
+-- Interest Rate data must populate Interest fields.
+-- =====================================================================
+
+WITH source_dates AS (
+    SELECT
+        business_date,
+        COUNT(*) AS deposit_count,
+        0 AS position_count,
+        0 AS interest_count
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+    GROUP BY business_date
+
+    UNION ALL
+
+    SELECT
+        business_date,
+        0,
+        COUNT(*),
+        0
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_positions_eod_snapshots`
+    GROUP BY business_date
+
+    UNION ALL
+
+    SELECT
+        business_date,
+        0,
+        0,
+        COUNT(*)
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_interest_rates_eod_snapshots`
+    GROUP BY business_date
+),
+
+source_summary AS (
+    SELECT
+        business_date,
+        SUM(deposit_count) AS deposit_count,
+        SUM(position_count) AS position_count,
+        SUM(interest_count) AS interest_count
+    FROM source_dates
+    GROUP BY business_date
+),
+
+target_summary AS (
+    SELECT
+        business_date,
+        COUNT(*) AS target_count,
+
+        COUNTIF(
+            position_quantity IS NOT NULL
+            OR position_as_of IS NOT NULL
+        ) AS position_target_count,
+
+        COUNTIF(
+            interest_as_of IS NOT NULL
+            OR interest_business_day_convention IS NOT NULL
+            OR interest_day_count IS NOT NULL
+            OR interest_payment_type IS NOT NULL
+            OR interest_balance_methodology IS NOT NULL
+            OR interest_rate_type IS NOT NULL
+            OR spread IS NOT NULL
+            OR fixed_rate IS NOT NULL
+            OR funds_transfer_rate IS NOT NULL
+        ) AS interest_target_count
+
+    FROM `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates`
+    GROUP BY business_date
+)
+
+SELECT
+    s.business_date,
+    s.deposit_count,
+    s.position_count,
+    s.interest_count,
+    COALESCE(t.target_count, 0) AS target_count,
+    COALESCE(t.position_target_count, 0) AS position_target_count,
+    COALESCE(t.interest_target_count, 0) AS interest_target_count
+FROM source_summary s
+LEFT JOIN target_summary t
+    USING (business_date)
+WHERE
+       (s.deposit_count > 0 AND COALESCE(t.target_count, 0) = 0)
+    OR (s.position_count > 0 AND COALESCE(t.position_target_count, 0) = 0)
+    OR (s.interest_count > 0 AND COALESCE(t.interest_target_count, 0) = 0);
+
+
+-- =====================================================================
+-- SDDA-TC-05
+-- Validate id
+--
+-- deposit.identity.domain + '.' + deposit.identity.id
+-- =====================================================================
+
+WITH src AS (
+    SELECT DISTINCT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.identity.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.identity.id'
+            )
+        ) AS expected_id
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.expected_id
+FROM src s
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.expected_id
+WHERE s.expected_id IS NOT NULL
+  AND v.id IS NULL;
+
+
+-- =====================================================================
+-- SDDA-TC-06
+-- Validate status
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(payload, '$.payload.deposit.identity.domain'),
+            '.',
+            JSON_VALUE(payload, '$.payload.deposit.identity.id')
+        ) AS id,
+
+        JSON_VALUE(
+            payload,
+            '$.payload.deposit.productInstanceStatus.value'
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.id,
+    s.expected_value,
+    v.status AS actual_value
+FROM src s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.expected_value IS DISTINCT FROM v.status;
+
+
+-- =====================================================================
+-- SDDA-TC-07
+-- Validate abi_id
+--
+-- alternativeIdentifiers where domain = ABInvest
+-- =====================================================================
+
+WITH src AS (
+    SELECT DISTINCT
+        s.business_date,
+
+        CONCAT(
+            JSON_VALUE(s.payload, '$.payload.deposit.identity.domain'),
+            '.',
+            JSON_VALUE(s.payload, '$.payload.deposit.identity.id')
+        ) AS id,
+
+        JSON_VALUE(ai, '$.id') AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots` s
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                s.payload,
+                '$.payload.deposit.alternativeIdentifiers'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) ai
+
+    WHERE JSON_VALUE(ai, '$.domain') = 'ABInvest'
+)
+
+SELECT
+    s.business_date,
+    s.id,
+    s.expected_value,
+    v.abi_id AS actual_value
+FROM src s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.expected_value IS DISTINCT FROM v.abi_id;
+
+
+-- =====================================================================
+-- SDDA-TC-08
+-- Validate brds_id
+-- =====================================================================
+
+WITH src AS (
+    SELECT DISTINCT
+        s.business_date,
+
+        CONCAT(
+            JSON_VALUE(s.payload, '$.payload.deposit.identity.domain'),
+            '.',
+            JSON_VALUE(s.payload, '$.payload.deposit.identity.id')
+        ) AS id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                p,
+                '$.participant.dbParticipant.bookIdentifier.identifier.id'
+            ) AS INT64
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots` s
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                s.payload,
+                '$.payload.deposit.productInstanceParticipants'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) p
+
+    WHERE JSON_VALUE(
+        p,
+        '$.participant.dbParticipant.bookIdentifier.identifier.id'
+    ) IS NOT NULL
+)
+
+SELECT
+    s.business_date,
+    s.id,
+    s.expected_value,
+    v.brds_id AS actual_value
+FROM src s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.expected_value IS DISTINCT FROM v.brds_id;
+
+
+-- =====================================================================
+-- SDDA-TC-09
+-- Validate prds_id
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(payload, '$.payload.deposit.identity.domain'),
+            '.',
+            JSON_VALUE(payload, '$.payload.deposit.identity.id')
+        ) AS id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.productTypeIdentifier.id'
+            ) AS INT64
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+
+    WHERE JSON_VALUE(
+        payload,
+        '$.payload.deposit.productTypeIdentifier.domain'
+    ) = 'PRDS-PRODUCT'
+)
+
+SELECT
+    s.business_date,
+    s.id,
+    s.expected_value,
+    v.prds_id AS actual_value
+FROM src s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.expected_value IS DISTINCT FROM v.prds_id;
+
+
+-- =====================================================================
+-- SDDA-TC-10
+-- Validate crds_id
+-- =====================================================================
+
+WITH src AS (
+    SELECT DISTINCT
+        s.business_date,
+
+        CONCAT(
+            JSON_VALUE(s.payload, '$.payload.deposit.identity.domain'),
+            '.',
+            JSON_VALUE(s.payload, '$.payload.deposit.identity.id')
+        ) AS id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                p,
+                '$.participant.clientParticipant.clientPartyIdentifier.id'
+            ) AS INT64
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots` s
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                s.payload,
+                '$.payload.deposit.productInstanceParticipants'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) p
+
+    WHERE JSON_VALUE(
+        p,
+        '$.participant.clientParticipant.clientPartyIdentifier.domain'
+    ) = 'CRDS_PTY'
+)
+
+SELECT
+    s.business_date,
+    s.id,
+    s.expected_value,
+    v.crds_id AS actual_value
+FROM src s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.expected_value IS DISTINCT FROM v.crds_id;
+
+
+-- =====================================================================
+-- SDDA-TC-11
+-- Validate koncord_id
+-- =====================================================================
+
+WITH src AS (
+    SELECT DISTINCT
+        s.business_date,
+
+        CONCAT(
+            JSON_VALUE(s.payload, '$.payload.deposit.identity.domain'),
+            '.',
+            JSON_VALUE(s.payload, '$.payload.deposit.identity.id')
+        ) AS id,
+
+        JSON_VALUE(
+            p,
+            '$.participant.clientParticipant.clientPartyIdentifier.id'
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots` s
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                s.payload,
+                '$.payload.deposit.productInstanceParticipants'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) p
+
+    WHERE JSON_VALUE(
+        p,
+        '$.participant.clientParticipant.clientPartyIdentifier.domain'
+    ) = 'K-E'
+)
+
+SELECT
+    s.business_date,
+    s.id,
+    s.expected_value,
+    v.koncord_id AS actual_value
+FROM src s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.expected_value IS DISTINCT FROM v.koncord_id;
+
+
+-- =====================================================================
+-- SDDA-TC-12
+-- Validate creation_date_time
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(payload, '$.payload.deposit.identity.domain'),
+            '.',
+            JSON_VALUE(payload, '$.payload.deposit.identity.id')
+        ) AS id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.creationDateTime'
+            ) AS TIMESTAMP
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.id,
+    s.expected_value,
+    v.creation_date_time AS actual_value
+FROM src s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.expected_value IS DISTINCT FROM v.creation_date_time;
+
+
+-- =====================================================================
+-- SDDA-TC-13
+-- Validate effective_date
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(payload, '$.payload.deposit.identity.domain'),
+            '.',
+            JSON_VALUE(payload, '$.payload.deposit.identity.id')
+        ) AS id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.effectiveDate'
+            ) AS DATE
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.id,
+    s.expected_value,
+    v.effective_date AS actual_value
+FROM src s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.expected_value IS DISTINCT FROM v.effective_date;
+
+
+-- =====================================================================
+-- SDDA-TC-14
+-- Validate first_deposit_date
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(payload, '$.payload.deposit.identity.domain'),
+            '.',
+            JSON_VALUE(payload, '$.payload.deposit.identity.id')
+        ) AS id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.firstDepositDate'
+            ) AS DATE
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.id,
+    s.expected_value,
+    v.first_deposit_date AS actual_value
+FROM src s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.expected_value IS DISTINCT FROM v.first_deposit_date;
+
+
+-- =====================================================================
+-- SDDA-TC-15
+-- Validate start_date
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(payload, '$.payload.deposit.identity.domain'),
+            '.',
+            JSON_VALUE(payload, '$.payload.deposit.identity.id')
+        ) AS id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.startDate'
+            ) AS DATE
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.id,
+    s.expected_value,
+    v.start_date AS actual_value
+FROM src s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.expected_value IS DISTINCT FROM v.start_date;
+
+
+-- =====================================================================
+-- SDDA-TC-16
+-- Validate end_date
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(payload, '$.payload.deposit.identity.domain'),
+            '.',
+            JSON_VALUE(payload, '$.payload.deposit.identity.id')
+        ) AS id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.endDate'
+            ) AS DATE
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.id,
+    s.expected_value,
+    v.end_date AS actual_value
+FROM src s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.expected_value IS DISTINCT FROM v.end_date;
+
+
+-- =====================================================================
+-- SDDA-TC-17
+-- Validate maturity_date
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(payload, '$.payload.deposit.identity.domain'),
+            '.',
+            JSON_VALUE(payload, '$.payload.deposit.identity.id')
+        ) AS id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.termDeposit.maturityDate'
+            ) AS DATE
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.id,
+    s.expected_value,
+    v.maturity_date AS actual_value
+FROM src s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.expected_value IS DISTINCT FROM v.maturity_date;
+
+
+-- =====================================================================
+-- SDDA-TC-18
+-- Validate end_cash_amount
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(payload, '$.payload.deposit.identity.domain'),
+            '.',
+            JSON_VALUE(payload, '$.payload.deposit.identity.id')
+        ) AS id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.depositOriginalValues.originalDepositEndCash.amount'
+            ) AS FLOAT64
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.id,
+    s.expected_value,
+    v.end_cash_amount AS actual_value
+FROM src s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.expected_value IS DISTINCT FROM v.end_cash_amount;
+
+
+-- =====================================================================
+-- SDDA-TC-19
+-- Validate currency
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(payload, '$.payload.deposit.identity.domain'),
+            '.',
+            JSON_VALUE(payload, '$.payload.deposit.identity.id')
+        ) AS id,
+
+        JSON_VALUE(
+            payload,
+            '$.payload.deposit.depositOriginalValues.originalDepositEndCash.currency'
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.id,
+    s.expected_value,
+    v.currency AS actual_value
+FROM src s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.expected_value IS DISTINCT FROM v.currency;
+
+
+-- =====================================================================
+-- SDDA-TC-20
+-- Validate position_quantity
+--
+-- Position is linked to Deposit using position.depositIdentifier.
+--
+-- If a Position value exists but depositIdentifier is missing,
+-- the query returns the record for investigation.
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(
+                payload,
+                '$.payload.position.depositIdentifier.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                payload,
+                '$.payload.position.depositIdentifier.id'
+            )
+        ) AS deposit_id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                payload,
+                '$.payload.position.positionQuantity'
+            ) AS FLOAT64
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_positions_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.deposit_id,
+    s.expected_value,
+    v.position_quantity AS actual_value,
+
+    CASE
+        WHEN s.deposit_id IS NULL
+            THEN 'SOURCE_DEPOSIT_IDENTIFIER_MISSING'
+        WHEN v.id IS NULL
+            THEN 'TARGET_DEPOSIT_NOT_FOUND'
+        ELSE 'VALUE_MISMATCH'
+    END AS issue
+
+FROM src s
+
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.deposit_id
+
+WHERE s.expected_value IS NOT NULL
+  AND (
+      s.deposit_id IS NULL
+      OR v.id IS NULL
+      OR s.expected_value IS DISTINCT FROM v.position_quantity
+  );
+
+
+-- =====================================================================
+-- SDDA-TC-21
+-- Validate position_as_of
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(
+                payload,
+                '$.payload.position.depositIdentifier.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                payload,
+                '$.payload.position.depositIdentifier.id'
+            )
+        ) AS deposit_id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                payload,
+                '$.payload.position.positionAsOf'
+            ) AS DATE
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_positions_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.deposit_id,
+    s.expected_value,
+    v.position_as_of AS actual_value,
+
+    CASE
+        WHEN s.deposit_id IS NULL
+            THEN 'SOURCE_DEPOSIT_IDENTIFIER_MISSING'
+        WHEN v.id IS NULL
+            THEN 'TARGET_DEPOSIT_NOT_FOUND'
+        ELSE 'VALUE_MISMATCH'
+    END AS issue
+
+FROM src s
+
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.deposit_id
+
+WHERE s.expected_value IS NOT NULL
+  AND (
+      s.deposit_id IS NULL
+      OR v.id IS NULL
+      OR s.expected_value IS DISTINCT FROM v.position_as_of
+  );
+
+
+-- =====================================================================
+-- SDDA-TC-22
+-- Validate interest_as_of
+--
+-- Interest Rate -> Deposit:
+-- interestRateStream.depositIdentifier
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(
+                payload,
+                '$.payload.interestRateStream.depositIdentifier.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                payload,
+                '$.payload.interestRateStream.depositIdentifier.id'
+            )
+        ) AS deposit_id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                payload,
+                '$.payload.interestRateStream.asOf'
+            ) AS DATE
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_interest_rates_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.deposit_id,
+    s.expected_value,
+    v.interest_as_of AS actual_value
+FROM src s
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.deposit_id
+WHERE s.expected_value IS NOT NULL
+  AND (
+      s.deposit_id IS NULL
+      OR v.id IS NULL
+      OR s.expected_value IS DISTINCT FROM v.interest_as_of
+  );
+
+
+-- =====================================================================
+-- SDDA-TC-23
+-- Validate interest_business_day_convention
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(
+                payload,
+                '$.payload.interestRateStream.depositIdentifier.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                payload,
+                '$.payload.interestRateStream.depositIdentifier.id'
+            )
+        ) AS deposit_id,
+
+        JSON_VALUE(
+            payload,
+            '$.payload.interestRateStream.paymentDates.businessDayConvention.value'
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_interest_rates_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.deposit_id,
+    s.expected_value,
+    v.interest_business_day_convention AS actual_value
+FROM src s
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.deposit_id
+WHERE s.expected_value IS NOT NULL
+  AND (
+      s.deposit_id IS NULL
+      OR v.id IS NULL
+      OR s.expected_value IS DISTINCT FROM
+         v.interest_business_day_convention
+  );
+
+
+-- =====================================================================
+-- SDDA-TC-24
+-- Validate interest_day_count
+--
+-- calculationPeriodAmounts is ARRAY
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        s.business_date,
+
+        CONCAT(
+            JSON_VALUE(
+                s.payload,
+                '$.payload.interestRateStream.depositIdentifier.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                s.payload,
+                '$.payload.interestRateStream.depositIdentifier.id'
+            )
+        ) AS deposit_id,
+
+        JSON_VALUE(
+            cpa,
+            '$.dayCountFraction.value'
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_interest_rates_eod_snapshots` s
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                s.payload,
+                '$.payload.interestRateStream.calculationPeriodAmounts'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) cpa
+)
+
+SELECT
+    s.business_date,
+    s.deposit_id,
+    s.expected_value,
+    v.interest_day_count AS actual_value
+FROM src s
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.deposit_id
+WHERE s.expected_value IS NOT NULL
+  AND (
+      s.deposit_id IS NULL
+      OR v.id IS NULL
+      OR s.expected_value IS DISTINCT FROM v.interest_day_count
+  );
+
+
+-- =====================================================================
+-- SDDA-TC-25
+-- Validate interest_payment_type
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        s.business_date,
+
+        CONCAT(
+            JSON_VALUE(
+                s.payload,
+                '$.payload.interestRateStream.depositIdentifier.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                s.payload,
+                '$.payload.interestRateStream.depositIdentifier.id'
+            )
+        ) AS deposit_id,
+
+        JSON_VALUE(
+            cpa,
+            '$.interestPaymentType.value'
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_interest_rates_eod_snapshots` s
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                s.payload,
+                '$.payload.interestRateStream.calculationPeriodAmounts'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) cpa
+)
+
+SELECT
+    s.business_date,
+    s.deposit_id,
+    s.expected_value,
+    v.interest_payment_type AS actual_value
+FROM src s
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.deposit_id
+WHERE s.expected_value IS NOT NULL
+  AND (
+      s.deposit_id IS NULL
+      OR v.id IS NULL
+      OR s.expected_value IS DISTINCT FROM v.interest_payment_type
+  );
+
+
+-- =====================================================================
+-- SDDA-TC-26
+-- Validate interest_balance_methodology
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        s.business_date,
+
+        CONCAT(
+            JSON_VALUE(
+                s.payload,
+                '$.payload.interestRateStream.depositIdentifier.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                s.payload,
+                '$.payload.interestRateStream.depositIdentifier.id'
+            )
+        ) AS deposit_id,
+
+        JSON_VALUE(
+            cpa,
+            '$.interestBalanceMethodology.value'
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_interest_rates_eod_snapshots` s
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                s.payload,
+                '$.payload.interestRateStream.calculationPeriodAmounts'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) cpa
+)
+
+SELECT
+    s.business_date,
+    s.deposit_id,
+    s.expected_value,
+    v.interest_balance_methodology AS actual_value
+FROM src s
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.deposit_id
+WHERE s.expected_value IS NOT NULL
+  AND (
+      s.deposit_id IS NULL
+      OR v.id IS NULL
+      OR s.expected_value IS DISTINCT FROM
+         v.interest_balance_methodology
+  );
+
+
+-- =====================================================================
+-- SDDA-TC-27
+-- Validate interest_rate_type
+--
+-- calculationPeriodAmounts = ARRAY
+-- unbandedRates = ARRAY
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        s.business_date,
+
+        CONCAT(
+            JSON_VALUE(
+                s.payload,
+                '$.payload.interestRateStream.depositIdentifier.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                s.payload,
+                '$.payload.interestRateStream.depositIdentifier.id'
+            )
+        ) AS deposit_id,
+
+        JSON_VALUE(
+            ubr,
+            '$.interestRate.interestRateType.value'
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_interest_rates_eod_snapshots` s
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                s.payload,
+                '$.payload.interestRateStream.calculationPeriodAmounts'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) cpa
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                cpa,
+                '$.unbandedRates'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) ubr
+)
+
+SELECT
+    s.business_date,
+    s.deposit_id,
+    s.expected_value,
+    v.interest_rate_type AS actual_value
+FROM src s
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.deposit_id
+WHERE s.expected_value IS NOT NULL
+  AND (
+      s.deposit_id IS NULL
+      OR v.id IS NULL
+      OR s.expected_value IS DISTINCT FROM v.interest_rate_type
+  );
+
+
+-- =====================================================================
+-- SDDA-TC-28
+-- Validate spread
+--
+-- calculationPeriodAmounts = ARRAY
+-- unbandedRates = ARRAY
+-- spreads = ARRAY
+--
+-- Only ClientMargin
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        s.business_date,
+
+        CONCAT(
+            JSON_VALUE(
+                s.payload,
+                '$.payload.interestRateStream.depositIdentifier.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                s.payload,
+                '$.payload.interestRateStream.depositIdentifier.id'
+            )
+        ) AS deposit_id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                sp,
+                '$.spread'
+            ) AS FLOAT64
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_interest_rates_eod_snapshots` s
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                s.payload,
+                '$.payload.interestRateStream.calculationPeriodAmounts'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) cpa
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                cpa,
+                '$.unbandedRates'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) ubr
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                ubr,
+                '$.interestRate.spreads'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) sp
+
+    WHERE JSON_VALUE(
+        sp,
+        '$.type.value'
+    ) = 'ClientMargin'
+)
+
+SELECT
+    s.business_date,
+    s.deposit_id,
+    s.expected_value,
+    v.spread AS actual_value
+FROM src s
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.deposit_id
+WHERE s.expected_value IS NOT NULL
+  AND (
+      s.deposit_id IS NULL
+      OR v.id IS NULL
+      OR s.expected_value IS DISTINCT FROM v.spread
+  );
+
+
+-- =====================================================================
+-- SDDA-TC-29
+-- Validate fixed_rate
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        s.business_date,
+
+        CONCAT(
+            JSON_VALUE(
+                s.payload,
+                '$.payload.interestRateStream.depositIdentifier.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                s.payload,
+                '$.payload.interestRateStream.depositIdentifier.id'
+            )
+        ) AS deposit_id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                ubr,
+                '$.interestRate.fixedRate.fixedRate'
+            ) AS FLOAT64
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_interest_rates_eod_snapshots` s
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                s.payload,
+                '$.payload.interestRateStream.calculationPeriodAmounts'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) cpa
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                cpa,
+                '$.unbandedRates'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) ubr
+)
+
+SELECT
+    s.business_date,
+    s.deposit_id,
+    s.expected_value,
+    v.fixed_rate AS actual_value
+FROM src s
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.deposit_id
+WHERE s.expected_value IS NOT NULL
+  AND (
+      s.deposit_id IS NULL
+      OR v.id IS NULL
+      OR s.expected_value IS DISTINCT FROM v.fixed_rate
+  );
+
+
+-- =====================================================================
+-- SDDA-TC-30
+-- Validate funds_transfer_rate
+-- =====================================================================
+
+WITH src AS (
+    SELECT
+        s.business_date,
+
+        CONCAT(
+            JSON_VALUE(
+                s.payload,
+                '$.payload.interestRateStream.depositIdentifier.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                s.payload,
+                '$.payload.interestRateStream.depositIdentifier.id'
+            )
+        ) AS deposit_id,
+
+        SAFE_CAST(
+            JSON_VALUE(
+                ubr,
+                '$.interestRate.fixedRate.fundsTransferRate'
+            ) AS FLOAT64
+        ) AS expected_value
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_interest_rates_eod_snapshots` s
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                s.payload,
+                '$.payload.interestRateStream.calculationPeriodAmounts'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) cpa
+
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                cpa,
+                '$.unbandedRates'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) ubr
+)
+
+SELECT
+    s.business_date,
+    s.deposit_id,
+    s.expected_value,
+    v.funds_transfer_rate AS actual_value
+FROM src s
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.deposit_id
+WHERE s.expected_value IS NOT NULL
+  AND (
+      s.deposit_id IS NULL
+      OR v.id IS NULL
+      OR s.expected_value IS DISTINCT FROM v.funds_transfer_rate
+  );
+
+
+-- =====================================================================
+-- SDDA-TC-31
+-- Validate expected Deposit record completeness
+-- =====================================================================
+
+WITH src AS (
+    SELECT DISTINCT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.identity.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.identity.id'
+            )
+        ) AS id
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+)
+
+SELECT
+    s.business_date,
+    s.id AS missing_target_id
+FROM src s
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.id IS NOT NULL
+  AND v.id IS NULL;
+
+
+-- =====================================================================
+-- SDDA-TC-32
+-- Validate unexpected target records
+--
+-- Every target Deposit id/business_date should be traceable
+-- to the Deposit source.
+-- =====================================================================
+
+WITH src AS (
+    SELECT DISTINCT
+        business_date,
+
+        CONCAT(
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.identity.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.identity.id'
+            )
+        ) AS id
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+)
+
+SELECT
+    v.*
+FROM
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+LEFT JOIN src s
+    ON s.business_date = v.business_date
+   AND s.id = v.id
+WHERE s.id IS NULL;
+
+
+-- =====================================================================
+-- SDDA-TC-33
+-- Validate duplicates at current EOD grain
+--
+-- Current expected grain:
+-- business_date + id
+-- =====================================================================
+
+SELECT
+    business_date,
+    id,
+    COUNT(*) AS record_count
+FROM
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates`
+GROUP BY
+    business_date,
+    id
+HAVING COUNT(*) > 1;
+
+
+-- =====================================================================
+-- SDDA-TC-34
+-- Validate unexpected NULL mapped identifiers
+--
+-- Returns cases where source has an identifier,
+-- target record exists, but target field is NULL.
+-- =====================================================================
+
+WITH deposit_base AS (
+    SELECT
+        business_date,
+        payload,
+
+        CONCAT(
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.identity.domain'
+            ),
+            '.',
+            JSON_VALUE(
+                payload,
+                '$.payload.deposit.identity.id'
+            )
+        ) AS id
+
+    FROM `db-dev-7d9v-mp-dap.dap_staging_sdda_de_dev_fra.sdda_deposits_eod_snapshots`
+),
+
+abi AS (
+    SELECT DISTINCT
+        b.business_date,
+        b.id,
+        JSON_VALUE(ai, '$.id') AS source_value
+    FROM deposit_base b
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                b.payload,
+                '$.payload.deposit.alternativeIdentifiers'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) ai
+    WHERE JSON_VALUE(ai, '$.domain') = 'ABInvest'
+),
+
+brds AS (
+    SELECT DISTINCT
+        b.business_date,
+        b.id,
+        JSON_VALUE(
+            p,
+            '$.participant.dbParticipant.bookIdentifier.identifier.id'
+        ) AS source_value
+    FROM deposit_base b
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                b.payload,
+                '$.payload.deposit.productInstanceParticipants'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) p
+    WHERE JSON_VALUE(
+        p,
+        '$.participant.dbParticipant.bookIdentifier.identifier.id'
+    ) IS NOT NULL
+),
+
+prds AS (
+    SELECT DISTINCT
+        business_date,
+        id,
+        JSON_VALUE(
+            payload,
+            '$.payload.deposit.productTypeIdentifier.id'
+        ) AS source_value
+    FROM deposit_base
+    WHERE JSON_VALUE(
+        payload,
+        '$.payload.deposit.productTypeIdentifier.domain'
+    ) = 'PRDS-PRODUCT'
+),
+
+crds AS (
+    SELECT DISTINCT
+        b.business_date,
+        b.id,
+        JSON_VALUE(
+            p,
+            '$.participant.clientParticipant.clientPartyIdentifier.id'
+        ) AS source_value
+    FROM deposit_base b
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                b.payload,
+                '$.payload.deposit.productInstanceParticipants'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) p
+    WHERE JSON_VALUE(
+        p,
+        '$.participant.clientParticipant.clientPartyIdentifier.domain'
+    ) = 'CRDS_PTY'
+),
+
+koncord AS (
+    SELECT DISTINCT
+        b.business_date,
+        b.id,
+        JSON_VALUE(
+            p,
+            '$.participant.clientParticipant.clientPartyIdentifier.id'
+        ) AS source_value
+    FROM deposit_base b
+    CROSS JOIN UNNEST(
+        COALESCE(
+            JSON_QUERY_ARRAY(
+                b.payload,
+                '$.payload.deposit.productInstanceParticipants'
+            ),
+            ARRAY<JSON>[]
+        )
+    ) p
+    WHERE JSON_VALUE(
+        p,
+        '$.participant.clientParticipant.clientPartyIdentifier.domain'
+    ) = 'K-E'
+)
+
+SELECT
+    'abi_id' AS attribute,
+    s.business_date,
+    s.id,
+    s.source_value
+FROM abi s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.source_value IS NOT NULL
+  AND v.abi_id IS NULL
+
+UNION ALL
+
+SELECT
+    'brds_id',
+    s.business_date,
+    s.id,
+    s.source_value
+FROM brds s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.source_value IS NOT NULL
+  AND v.brds_id IS NULL
+
+UNION ALL
+
+SELECT
+    'prds_id',
+    s.business_date,
+    s.id,
+    s.source_value
+FROM prds s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.source_value IS NOT NULL
+  AND v.prds_id IS NULL
+
+UNION ALL
+
+SELECT
+    'crds_id',
+    s.business_date,
+    s.id,
+    s.source_value
+FROM crds s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.source_value IS NOT NULL
+  AND v.crds_id IS NULL
+
+UNION ALL
+
+SELECT
+    'koncord_id',
+    s.business_date,
+    s.id,
+    s.source_value
+FROM koncord s
+JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates` v
+    ON v.business_date = s.business_date
+   AND v.id = s.id
+WHERE s.source_value IS NOT NULL
+  AND v.koncord_id IS NULL;
+
+
+-- =====================================================================
+-- SDDA-TC-35
+-- Validate SDDA / BDH schema compliance
+--
+-- Additional technical fields are allowed.
+-- =====================================================================
+
+WITH expected AS (
+    SELECT 'id' AS column_name, 'STRING' AS expected_type UNION ALL
+    SELECT 'status', 'STRING' UNION ALL
+    SELECT 'abi_id', 'STRING' UNION ALL
+    SELECT 'brds_id', 'INT64' UNION ALL
+    SELECT 'prds_id', 'INT64' UNION ALL
+    SELECT 'crds_id', 'INT64' UNION ALL
+    SELECT 'koncord_id', 'STRING' UNION ALL
+    SELECT 'creation_date_time', 'TIMESTAMP' UNION ALL
+    SELECT 'effective_date', 'DATE' UNION ALL
+    SELECT 'first_deposit_date', 'DATE' UNION ALL
+    SELECT 'start_date', 'DATE' UNION ALL
+    SELECT 'end_date', 'DATE' UNION ALL
+    SELECT 'maturity_date', 'DATE' UNION ALL
+    SELECT 'end_cash_amount', 'FLOAT64' UNION ALL
+    SELECT 'currency', 'STRING' UNION ALL
+    SELECT 'position_quantity', 'FLOAT64' UNION ALL
+    SELECT 'position_as_of', 'DATE' UNION ALL
+    SELECT 'interest_as_of', 'DATE' UNION ALL
+    SELECT 'interest_business_day_convention', 'STRING' UNION ALL
+    SELECT 'interest_day_count', 'STRING' UNION ALL
+    SELECT 'interest_payment_type', 'STRING' UNION ALL
+    SELECT 'interest_balance_methodology', 'STRING' UNION ALL
+    SELECT 'interest_rate_type', 'STRING' UNION ALL
+    SELECT 'spread', 'FLOAT64' UNION ALL
+    SELECT 'fixed_rate', 'FLOAT64' UNION ALL
+    SELECT 'funds_transfer_rate', 'FLOAT64'
+)
+
+SELECT
+    e.column_name,
+    e.expected_type,
+    c.data_type AS actual_type
+FROM expected e
+LEFT JOIN
+    `db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.INFORMATION_SCHEMA.COLUMNS` c
+    ON c.table_name =
+       'rawview_loyalty_sdda_deposits_positions_interest_rates'
+   AND c.column_name = e.column_name
+WHERE c.column_name IS NULL
+   OR c.data_type != e.expected_type;
