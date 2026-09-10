@@ -1,0 +1,15 @@
+Scope
+
+Validation of the SDDA Deposits, Positions and Interest Rates Business Vault view created for CBDAS-2685.
+
+The testing covers:
+- View existence and schema
+- Data type validation
+- Attribute mapping from SDDA source tables
+- Deposit, Position and Interest Rate data consolidation
+- Record completeness and unexpected records
+- Duplicate and null checks
+- Positive data checks to confirm that test data exists for each validation
+
+Target view:
+db-dev-7d9v-mp-dap.dap_businessvault_loyalty_dev_fra.rawview_loyalty_sdda_deposits_positions_interest_rates
