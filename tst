@@ -1,26 +1,26 @@
 -- ============================================================
 -- LOY-TOP-01 - Validate CLIENT_PARTNER_ID against PDOA
 -- Description:
--- Validates that every CLIENT_PARTNER_ID present in Loyalty
--- exists as a PARTY_ID in PDOA.
+-- Validates that every CLIENT_PARTNER_ID in the Loyalty view
+-- exists in PDOA Party using identifier.id.
 --
 -- Expected result: 0 rows = PASSED
 -- Status =
 -- ============================================================
 
 SELECT DISTINCT
-    CAST(l.CLIENT_PARTNER_ID AS STRING) AS CLIENT_PARTNER_ID
+    l.CLIENT_PARTNER_ID
 FROM `db-uat-g8rw-mp-dap.dap_shared_views_loyalty_uat_fra.loyalty__denormalized_view_v1` l
 LEFT JOIN `db-uat-g8rw-mp-dap.dap_rawvault_uat_fra.pdoa_party` p
-    ON CAST(p.PARTY_ID AS STRING) = CAST(l.CLIENT_PARTNER_ID AS STRING)
-WHERE p.PARTY_ID IS NULL;
+    ON CAST(l.CLIENT_PARTNER_ID AS STRING) = CAST(p.identifier.id AS STRING)
+WHERE p.identifier.id IS NULL;
 
 
 -- ============================================================
 -- LOY-TOP-02 - Validate CLIENT_PARTNER_ID uniqueness
 -- Description:
--- Validates that CLIENT_PARTNER_ID is unique at the top level
--- of the Loyalty view.
+-- Validates that CLIENT_PARTNER_ID occurs only once at the
+-- top level of the Loyalty view.
 --
 -- Expected result: 0 rows = PASSED
 -- Status =
@@ -38,16 +38,20 @@ HAVING COUNT(*) > 1;
 -- LOY-TOP-02.1 - Validate eligible CLIENT_PARTNER_ID completeness
 -- Description:
 -- Validates that every partner eligible for Loyalty according
--- to the FKN eligibility rules exists in the Loyalty view.
+-- to the confirmed FKN eligibility rules exists in the
+-- Loyalty view.
 --
--- Partner eligibility requires:
--- 1. At least one active ASSETTYPE = 'B' FKN with
---    GBM 0-7 or 9-19.
--- 2. At least one active ASSETTYPE = 'B' FKN with
---    SEGMENT in ('GK Märkte', 'GK Region', 'FYRST', 'FK').
+-- Eligibility is evaluated at PARTID level.
 --
--- The GBM and SEGMENT conditions are evaluated at PARTID level
--- and may be fulfilled by different FKNs.
+-- A partner qualifies when:
+-- - at least one active ASSETTYPE = 'B' FKN has
+--   GBM between 0-7 or 9-19
+-- AND
+-- - at least one active ASSETTYPE = 'B' FKN has
+--   SEGMENT in ('GK Märkte', 'GK Region', 'FYRST', 'FK')
+--
+-- The two conditions may be fulfilled by different FKNs
+-- belonging to the same PARTID.
 --
 -- Expected result: 0 rows = PASSED
 -- Status =
@@ -70,18 +74,18 @@ eligible_partners AS (
     FROM active_fkn a
     WHERE EXISTS (
         SELECT 1
-        FROM active_fkn gbm
-        WHERE gbm.PARTID = a.PARTID
+        FROM active_fkn g
+        WHERE g.PARTID = a.PARTID
           AND (
-                gbm.GBM BETWEEN 0 AND 7
-                OR gbm.GBM BETWEEN 9 AND 19
-              )
+              g.GBM BETWEEN 0 AND 7
+              OR g.GBM BETWEEN 9 AND 19
+          )
     )
-      AND EXISTS (
+    AND EXISTS (
         SELECT 1
-        FROM active_fkn seg
-        WHERE seg.PARTID = a.PARTID
-          AND seg.SEGMENT IN ('GK Märkte', 'GK Region', 'FYRST', 'FK')
+        FROM active_fkn s
+        WHERE s.PARTID = a.PARTID
+          AND s.SEGMENT IN ('GK Märkte', 'GK Region', 'FYRST', 'FK')
     )
 )
 
@@ -94,11 +98,14 @@ WHERE l.CLIENT_PARTNER_ID IS NULL;
 
 
 -- ============================================================
--- LOY-TOP-02.2 - Validate Loyalty clients meet FKN eligibility
+-- LOY-TOP-02.2 - Validate Loyalty CLIENT_PARTNER_ID eligibility
 -- Description:
 -- Reverse validation of LOY-TOP-02.1.
 -- Validates that every CLIENT_PARTNER_ID present in Loyalty
--- qualifies according to the confirmed partner-level FKN rules.
+-- satisfies the confirmed partner-level FKN eligibility rules.
+--
+-- Eligibility is evaluated at PARTID level and the GBM and
+-- SEGMENT conditions may be fulfilled by different FKNs.
 --
 -- Expected result: 0 rows = PASSED
 -- Status =
@@ -121,23 +128,23 @@ eligible_partners AS (
     FROM active_fkn a
     WHERE EXISTS (
         SELECT 1
-        FROM active_fkn gbm
-        WHERE gbm.PARTID = a.PARTID
+        FROM active_fkn g
+        WHERE g.PARTID = a.PARTID
           AND (
-                gbm.GBM BETWEEN 0 AND 7
-                OR gbm.GBM BETWEEN 9 AND 19
-              )
+              g.GBM BETWEEN 0 AND 7
+              OR g.GBM BETWEEN 9 AND 19
+          )
     )
-      AND EXISTS (
+    AND EXISTS (
         SELECT 1
-        FROM active_fkn seg
-        WHERE seg.PARTID = a.PARTID
-          AND seg.SEGMENT IN ('GK Märkte', 'GK Region', 'FYRST', 'FK')
+        FROM active_fkn s
+        WHERE s.PARTID = a.PARTID
+          AND s.SEGMENT IN ('GK Märkte', 'GK Region', 'FYRST', 'FK')
     )
 )
 
 SELECT DISTINCT
-    CAST(l.CLIENT_PARTNER_ID AS STRING) AS CLIENT_PARTNER_ID
+    l.CLIENT_PARTNER_ID
 FROM `db-uat-g8rw-mp-dap.dap_shared_views_loyalty_uat_fra.loyalty__denormalized_view_v1` l
 LEFT JOIN eligible_partners e
     ON e.PARTID = CAST(l.CLIENT_PARTNER_ID AS STRING)
