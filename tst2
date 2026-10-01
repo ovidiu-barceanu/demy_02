@@ -1,0 +1,63 @@
+-- ============================================================
+-- TST 02.2 - CLIENT_PARTNER_ID - No ineligible partners in Loyalty
+-- Description:
+-- Validates that every CLIENT_PARTNER_ID present in the Loyalty view
+-- belongs to an eligible partner according to the FKN eligibility rules.
+--
+-- An eligible partner must have active FKNs with:
+--   CLOSED_FKN = FALSE
+--   ASSETTYPE = 'B'
+--
+-- At PARTID level BOTH conditions must be satisfied:
+--   A) At least one active FKN has GBM 0-7 or 9-19
+--   B) At least one active FKN has SEGMENT:
+--        1  = FK
+--        11 = GK Märkte
+--        21 = GK Region
+--        71 = FYRST
+--
+-- The GBM and SEGMENT conditions may be fulfilled by different FKNs
+-- belonging to the same PARTID.
+--
+-- Expected result: 0 rows = Passed
+-- Status =
+-- ============================================================
+
+WITH active_fkn AS (
+    SELECT
+        PARTID,
+        FKN,
+        GBM,
+        SEGMENT
+    FROM `db-uat-g8rw-mp-dap.dap_businessvault_uat_fra.fkn_segmentation`
+    WHERE CLOSED_FKN = FALSE
+      AND ASSETTYPE = 'B'
+),
+
+eligible_partners AS (
+    SELECT DISTINCT
+        a.PARTID
+    FROM active_fkn a
+    WHERE EXISTS (
+        SELECT 1
+        FROM active_fkn g
+        WHERE g.PARTID = a.PARTID
+          AND (
+              g.GBM BETWEEN 0 AND 7
+              OR g.GBM BETWEEN 9 AND 19
+          )
+    )
+    AND EXISTS (
+        SELECT 1
+        FROM active_fkn s
+        WHERE s.PARTID = a.PARTID
+          AND s.SEGMENT IN (1, 11, 21, 71)
+    )
+)
+
+SELECT DISTINCT
+    l.CLIENT_PARTNER_ID
+FROM `db-uat-g8rw-mp-dap.dap_shared_views_loyalty_uat_fra.loyalty__denormalized_view_v1` l
+LEFT JOIN eligible_partners e
+    ON e.PARTID = SAFE_CAST(l.CLIENT_PARTNER_ID AS INT64)
+WHERE e.PARTID IS NULL;
