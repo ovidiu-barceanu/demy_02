@@ -1,23 +1,27 @@
 -- ============================================================
--- TST 02.2 - CLIENT_PARTNER_ID - No ineligible partners in Loyalty
+-- TST 02.1 - CLIENT_PARTNER_ID - Eligible partners missing from Loyalty
 -- Description:
--- Validates that every CLIENT_PARTNER_ID present in the Loyalty view
--- belongs to an eligible partner according to the FKN eligibility rules.
+-- Validates that partners eligible for Loyalty are present as
+-- CLIENT_PARTNER_ID in the Loyalty view.
 --
--- An eligible partner must have active FKNs with:
+-- Eligibility is evaluated at PARTID level using active FKNs:
 --   CLOSED_FKN = FALSE
 --   ASSETTYPE = 'B'
 --
--- At PARTID level BOTH conditions must be satisfied:
---   A) At least one active FKN has GBM 0-7 or 9-19
---   B) At least one active FKN has SEGMENT:
---        1  = FK
---        11 = GK Märkte
---        21 = GK Region
---        71 = FYRST
+-- BOTH conditions must exist for the PARTID:
+--   A) At least one active FKN with GBM 0-7 or 9-19
+--      (GBM 8 excluded)
+--   B) At least one active FKN with SEGMENT IN (1,11,21,71)
 --
--- The GBM and SEGMENT conditions may be fulfilled by different FKNs
--- belonging to the same PARTID.
+-- Segment mapping:
+--   1  = FK
+--   11 = GK Märkte
+--   21 = GK Region
+--   71 = FYRST
+--
+-- The GBM and SEGMENT conditions may be fulfilled by different FKNs.
+--
+-- The partner must also have an account in the ZVKK account source.
 --
 -- Expected result: 0 rows = Passed
 -- Status =
@@ -34,7 +38,7 @@ WITH active_fkn AS (
       AND ASSETTYPE = 'B'
 ),
 
-eligible_partners AS (
+eligible_fkn_partners AS (
     SELECT DISTINCT
         a.PARTID
     FROM active_fkn a
@@ -53,11 +57,29 @@ eligible_partners AS (
         WHERE s.PARTID = a.PARTID
           AND s.SEGMENT IN (1, 11, 21, 71)
     )
+),
+
+eligible_partners AS (
+    SELECT DISTINCT
+        e.PARTID
+    FROM eligible_fkn_partners e
+    JOIN active_fkn f
+        ON f.PARTID = e.PARTID
+    WHERE EXISTS (
+        SELECT 1
+        FROM `db-uat-g8rw-mp-dap.dap_businessvault_zvkk_uat_fra.account_account_s` a
+        WHERE a.SALES_PRODUCT_ID = f.FKN
+    )
 )
 
-SELECT DISTINCT
-    l.CLIENT_PARTNER_ID
-FROM `db-uat-g8rw-mp-dap.dap_shared_views_loyalty_uat_fra.loyalty__denormalized_view_v1` l
-LEFT JOIN eligible_partners e
-    ON e.PARTID = SAFE_CAST(l.CLIENT_PARTNER_ID AS INT64)
-WHERE e.PARTID IS NULL;
+SELECT
+    e.PARTID AS CLIENT_PARTNER_ID
+FROM eligible_partners e
+LEFT JOIN (
+    SELECT DISTINCT
+        SAFE_CAST(CLIENT_PARTNER_ID AS INT64) AS CLIENT_PARTNER_ID
+    FROM `db-uat-g8rw-mp-dap.dap_shared_views_loyalty_uat_fra.loyalty__denormalized_view_v1`
+    WHERE CLIENT_PARTNER_ID IS NOT NULL
+) l
+    ON l.CLIENT_PARTNER_ID = e.PARTID
+WHERE l.CLIENT_PARTNER_ID IS NULL;
