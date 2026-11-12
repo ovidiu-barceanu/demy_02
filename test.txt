@@ -1,0 +1,65 @@
+Create a Python script that converts an Excel (`.xlsx`) file containing technical specifications and testing requirements into structured Markdown (`.md`) files.
+
+The Markdown files will be used by Gemini in VS Code as reference documentation for generating and improving BigQuery SQL test queries.
+
+### Requirements
+
+**1. Read the Excel file**
+- Use Python with `openpyxl`.
+- Process all sheets in the workbook.
+- Detect multiple separate tables within the same sheet.
+- Identify table headers, data rows, section titles, and text outside tables.
+- Handle merged cells, empty rows, multiline text, and formulas.
+- Preserve all technical information without summarizing or modifying it.
+
+**2. Generate Markdown files**
+- Create a `specs/` directory.
+- Generate one Markdown file per Excel sheet by default.
+- If a sheet contains multiple distinct tables or sections, organize them under separate Markdown headings.
+- Preserve the original Excel sheet names as Markdown headings.
+- Convert Excel tables into valid Markdown tables.
+- Preserve source table names, column names, data types, SQL expressions, business rules, and filtering conditions exactly.
+- Escape special Markdown characters when necessary.
+- Include original Excel cell ranges for traceability.
+
+**3. Generate an index**
+- Create `specs/index.md`.
+- List all generated files with links.
+- Include the original Excel sheet names and descriptions of their contents.
+
+**4. Make the script reusable**
+- Accept the Excel file path as a command-line argument.
+- Allow an optional output directory.
+- Automatically create the output directory.
+- Handle sheet names containing spaces or special characters.
+- Avoid overwriting unrelated existing files.
+- Display a summary of processed sheets, detected tables, and generated files.
+- Include error handling and clear error messages.
+
+**5. Validate the conversion**
+- Ensure no populated Excel cells are silently ignored.
+- Preserve information even when a table cannot be automatically detected.
+- Flag ambiguous table boundaries and merged-cell structures.
+- Report any content that could not be converted reliably.
+
+### Expected deliverables
+
+1. `excel_to_markdown.py` — complete, working Python script.
+2. `requirements.txt` — required dependencies.
+3. Instructions for installing dependencies and running the script on macOS from the VS Code terminal.
+4. Example command:
+
+```bash
+python3 excel_to_markdown.py specifications.xlsx --output specs/
+```
+
+### Important
+
+- The script must work with Excel files containing multiple sheets and multiple tables per sheet.
+- Prioritize preserving 100% of the original information over creating visually perfect Markdown.
+- Do not use AI APIs or external services for the conversion.
+- Do not modify the original Excel workbook.
+- Do not generate SQL queries. Only create Markdown documentation.
+- Write the actual Python files in my workspace, not just explanations or pseudocode.
+
+Implement the script and provide a short explanation of how to run it.
