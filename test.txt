@@ -1,69 +1,99 @@
-Create a reusable Python script named `excel_to_markdown.py` that converts a specific sheet from an Excel workbook into Markdown documentation.
+Create a Python script to convert a specific sheet from an Excel `.xlsb` workbook into a Markdown (`.md`) file.
 
-The Excel file may be `.xlsx` or `.xlsb` and can contain multiple sheets with multiple tables per sheet.
+The script already exists and is named `excelParser.py`.
 
-The Markdown output will be used by Gemini in VS Code as reference documentation for generating and improving BigQuery SQL test queries.
+### 1. File locations
 
-### 1. Excel support
-- Use `python-calamine` to support both `.xlsx` and `.xlsb`.
-- Accept the Excel file path as a command-line argument.
-- Accept a `--sheet` argument to specify exactly which sheet to process.
-- Process ONLY the selected sheet.
-- Match the sheet name exactly.
-- If the sheet does not exist, display the available sheet names.
-- Provide a `--list-sheets` option to display all available sheets without converting them.
+- The script `excelParser.py` is located in the `specs/` folder of my VS Code project.
+- The Excel `.xlsb` files are also located in the same `specs/` folder.
+- Save the generated Markdown files in the same `specs/` folder.
+- Do not create additional folders.
+- Do not create or modify README, requirements.txt, or any other files.
+- Only modify `excelParser.py` and generate the requested Markdown file.
 
-### 2. Extract the data
-- Read all populated cells in the selected sheet.
-- Detect multiple separate tables within the same sheet.
-- Identify table headers, section titles, notes, and business rules.
-- Preserve the original row and column order.
-- Preserve empty cells within tables so column alignment remains correct.
-- Preserve multiline text, SQL expressions, source mappings, and filtering conditions.
-- Do not summarize, interpret, or change the business logic.
-- Do not silently discard any populated cells.
+### 2. Excel parsing
 
-### 3. Generate Markdown
-- Create a `specs/` directory if it does not exist.
-- Generate one Markdown file for the selected sheet.
-- Name the file based on the sheet name, replacing invalid filename characters.
-- Use Markdown headings to separate individual tables and sections.
-- Convert detected tables into valid Markdown tables.
-- Preserve text outside tables as normal Markdown.
-- Escape Markdown special characters where required.
-- Include the original sheet name and cell ranges for traceability.
-- If table boundaries cannot be identified reliably, preserve the content and report the ambiguity instead of guessing.
+- Use `python-calamine` to read `.xlsb` files.
+- The workbook can contain multiple sheets.
+- Process ONLY the sheet specified by the user.
+- Extract ALL populated cells from that sheet.
+- Support multiple tables within the same sheet.
+- Preserve table headers, column names, business rules, source mappings, filtering conditions, SQL expressions, and notes.
+- Preserve the original order of information.
+- Handle empty cells, multiline text, and special characters.
+- Do not summarize, modify, or interpret the extracted information.
+- Do not silently skip populated cells.
 
-### 4. Command-line interface
+### 3. Markdown output
 
-Support these commands:
+- Generate one `.md` file per selected sheet.
+- Name the output file based on the sheet name (for example, `CLIENT_FKNS.md`).
+- Use Markdown headings to distinguish tables and sections.
+- Convert tabular data into properly formatted Markdown tables.
+- Preserve text outside tables.
+- If table boundaries are unclear, preserve the content rather than dropping it.
+- Ensure the Markdown is structured and readable by Gemini when used as reference documentation for BigQuery SQL testing.
 
-List sheets:
+### 4. Command-line usage
+
+The script must accept two positional arguments:
+
+1. Excel filename.
+2. Sheet name.
+
+Both arguments are required.
+
+Example:
+
 ```bash
-python3 excel_to_markdown.py specifications.xlsb --list-sheets
+python3 specs/excelParser.py specifications.xlsb "CLIENT_FKNS"
 ```
 
-Convert one sheet:
+The script must automatically look for `specifications.xlsb` in the same folder as `excelParser.py`, regardless of the current working directory.
+
+This command must:
+- Open `specs/specifications.xlsb`.
+- Read ONLY the `CLIENT_FKNS` sheet.
+- Convert all its contents to Markdown.
+- Save the result as `specs/CLIENT_FKNS.md`.
+
+If the Markdown file already exists, overwrite it automatically so I can regenerate the documentation after Excel changes.
+
+If the specified sheet does not exist, display the available sheet names.
+
+### 5. README section inside the Python file
+
+At the beginning of `excelParser.py`, include a clearly documented section as a Python docstring explaining:
+
+- What the script does.
+- Where the Excel files must be located.
+- How to execute the script.
+- How to specify the Excel filename and sheet name.
+- Where the Markdown output will be saved.
+- How to install `python-calamine` if it is missing.
+
+Include this exact command as a copy-paste example:
+
 ```bash
-python3 excel_to_markdown.py specifications.xlsb --sheet "CLIENT_FKNS"
+python3 specs/excelParser.py specifications.xlsb "CLIENT_FKNS"
 ```
 
-Convert one sheet to a specific directory:
-```bash
-python3 excel_to_markdown.py specifications.xlsb --sheet "CLIENT_FKNS" --output specs/
-```
+Do not create a separate README file.
 
-### 5. Validation
-- Verify that every populated cell from the selected sheet is represented in the Markdown output.
-- Report the number of populated cells, detected tables, and generated files.
-- Report ambiguous structures or unsupported Excel features.
-- Never modify the original workbook.
-- Do not overwrite an existing Markdown file unless the user explicitly passes `--overwrite`.
+### 6. Technical requirements
 
-### 6. Deliverables
-- Create the working `excel_to_markdown.py` script in my VS Code workspace.
-- Create `requirements.txt`.
-- Provide short installation and usage instructions for macOS.
-- Include error handling for missing files, invalid sheet names, and parsing failures.
+- Use Python 3.
+- Use `python-calamine` for Excel reading.
+- Do not use external APIs or AI services.
+- Do not modify the original Excel workbook.
+- Handle errors clearly.
+- Keep the code simple, maintainable, and reusable.
+- Do not generate SQL queries.
 
-Important: The script must work with `.xlsb` files containing multiple sheets, and it must convert ONLY the sheet specified using `--sheet`. Do not generate SQL queries.
+### 7. Implementation
+
+Update the existing `specs/excelParser.py` file directly with the complete working implementation.
+
+Do not create additional scripts, documentation files, or dependency files.
+
+The final result should let me open the VS Code terminal, paste a command containing the `.xlsb` filename and sheet name, and automatically generate the corresponding Markdown file in the `specs/` folder.
