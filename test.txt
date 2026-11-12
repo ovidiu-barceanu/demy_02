@@ -1,65 +1,69 @@
-Create a Python script that converts an Excel (`.xlsx`) file containing technical specifications and testing requirements into structured Markdown (`.md`) files.
+Create a reusable Python script named `excel_to_markdown.py` that converts a specific sheet from an Excel workbook into Markdown documentation.
 
-The Markdown files will be used by Gemini in VS Code as reference documentation for generating and improving BigQuery SQL test queries.
+The Excel file may be `.xlsx` or `.xlsb` and can contain multiple sheets with multiple tables per sheet.
 
-### Requirements
+The Markdown output will be used by Gemini in VS Code as reference documentation for generating and improving BigQuery SQL test queries.
 
-**1. Read the Excel file**
-- Use Python with `openpyxl`.
-- Process all sheets in the workbook.
-- Detect multiple separate tables within the same sheet.
-- Identify table headers, data rows, section titles, and text outside tables.
-- Handle merged cells, empty rows, multiline text, and formulas.
-- Preserve all technical information without summarizing or modifying it.
-
-**2. Generate Markdown files**
-- Create a `specs/` directory.
-- Generate one Markdown file per Excel sheet by default.
-- If a sheet contains multiple distinct tables or sections, organize them under separate Markdown headings.
-- Preserve the original Excel sheet names as Markdown headings.
-- Convert Excel tables into valid Markdown tables.
-- Preserve source table names, column names, data types, SQL expressions, business rules, and filtering conditions exactly.
-- Escape special Markdown characters when necessary.
-- Include original Excel cell ranges for traceability.
-
-**3. Generate an index**
-- Create `specs/index.md`.
-- List all generated files with links.
-- Include the original Excel sheet names and descriptions of their contents.
-
-**4. Make the script reusable**
+### 1. Excel support
+- Use `python-calamine` to support both `.xlsx` and `.xlsb`.
 - Accept the Excel file path as a command-line argument.
-- Allow an optional output directory.
-- Automatically create the output directory.
-- Handle sheet names containing spaces or special characters.
-- Avoid overwriting unrelated existing files.
-- Display a summary of processed sheets, detected tables, and generated files.
-- Include error handling and clear error messages.
+- Accept a `--sheet` argument to specify exactly which sheet to process.
+- Process ONLY the selected sheet.
+- Match the sheet name exactly.
+- If the sheet does not exist, display the available sheet names.
+- Provide a `--list-sheets` option to display all available sheets without converting them.
 
-**5. Validate the conversion**
-- Ensure no populated Excel cells are silently ignored.
-- Preserve information even when a table cannot be automatically detected.
-- Flag ambiguous table boundaries and merged-cell structures.
-- Report any content that could not be converted reliably.
+### 2. Extract the data
+- Read all populated cells in the selected sheet.
+- Detect multiple separate tables within the same sheet.
+- Identify table headers, section titles, notes, and business rules.
+- Preserve the original row and column order.
+- Preserve empty cells within tables so column alignment remains correct.
+- Preserve multiline text, SQL expressions, source mappings, and filtering conditions.
+- Do not summarize, interpret, or change the business logic.
+- Do not silently discard any populated cells.
 
-### Expected deliverables
+### 3. Generate Markdown
+- Create a `specs/` directory if it does not exist.
+- Generate one Markdown file for the selected sheet.
+- Name the file based on the sheet name, replacing invalid filename characters.
+- Use Markdown headings to separate individual tables and sections.
+- Convert detected tables into valid Markdown tables.
+- Preserve text outside tables as normal Markdown.
+- Escape Markdown special characters where required.
+- Include the original sheet name and cell ranges for traceability.
+- If table boundaries cannot be identified reliably, preserve the content and report the ambiguity instead of guessing.
 
-1. `excel_to_markdown.py` — complete, working Python script.
-2. `requirements.txt` — required dependencies.
-3. Instructions for installing dependencies and running the script on macOS from the VS Code terminal.
-4. Example command:
+### 4. Command-line interface
 
+Support these commands:
+
+List sheets:
 ```bash
-python3 excel_to_markdown.py specifications.xlsx --output specs/
+python3 excel_to_markdown.py specifications.xlsb --list-sheets
 ```
 
-### Important
+Convert one sheet:
+```bash
+python3 excel_to_markdown.py specifications.xlsb --sheet "CLIENT_FKNS"
+```
 
-- The script must work with Excel files containing multiple sheets and multiple tables per sheet.
-- Prioritize preserving 100% of the original information over creating visually perfect Markdown.
-- Do not use AI APIs or external services for the conversion.
-- Do not modify the original Excel workbook.
-- Do not generate SQL queries. Only create Markdown documentation.
-- Write the actual Python files in my workspace, not just explanations or pseudocode.
+Convert one sheet to a specific directory:
+```bash
+python3 excel_to_markdown.py specifications.xlsb --sheet "CLIENT_FKNS" --output specs/
+```
 
-Implement the script and provide a short explanation of how to run it.
+### 5. Validation
+- Verify that every populated cell from the selected sheet is represented in the Markdown output.
+- Report the number of populated cells, detected tables, and generated files.
+- Report ambiguous structures or unsupported Excel features.
+- Never modify the original workbook.
+- Do not overwrite an existing Markdown file unless the user explicitly passes `--overwrite`.
+
+### 6. Deliverables
+- Create the working `excel_to_markdown.py` script in my VS Code workspace.
+- Create `requirements.txt`.
+- Provide short installation and usage instructions for macOS.
+- Include error handling for missing files, invalid sheet names, and parsing failures.
+
+Important: The script must work with `.xlsb` files containing multiple sheets, and it must convert ONLY the sheet specified using `--sheet`. Do not generate SQL queries.
